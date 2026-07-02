@@ -72,8 +72,10 @@ export async function stt(blob: Blob): Promise<{ text: string; audio_path?: stri
 }
 
 export interface AnswerResult {
-  score: { dimensions: Record<string, number>; total: number; comment: string };
-  decision: { action: 'followup' | 'next'; followup_question: string; reason: string };
+  score: { dimensions: Record<string, number>; total: number; comment: string } | null;
+  decision: { action: 'followup' | 'next'; followup_question: string; acknowledgment?: string; reason: string };
+  acknowledgment?: string;
+  acknowledgment_audio_url?: string | null;
   next_question?: Question;
   round_finished?: boolean;
   round?: Round;

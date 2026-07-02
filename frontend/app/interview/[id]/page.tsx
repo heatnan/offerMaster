@@ -366,6 +366,34 @@ export default function InterviewPage() {
     await doSubmit(true);
   }
 
+  /**
+   * Play a short interviewer acknowledgment clip through the main <audio>
+   * element, wait for it to finish, then return so the caller can proceed
+   * to the next question. If the audio can't be loaded or the user's audio
+   * element isn't ready, resolve immediately so we don't block the flow.
+   */
+  function playAcknowledgment(src: string): Promise<void> {
+    return new Promise(resolve => {
+      const a = audioRef.current;
+      if (!a || !src) { resolve(); return; }
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        a.removeEventListener('ended', finish);
+        a.removeEventListener('error', finish);
+        clearTimeout(timer);
+        resolve();
+      };
+      // Safety timeout: ack should be < 3s; give it 6s max before giving up.
+      const timer = setTimeout(finish, 6000);
+      a.addEventListener('ended', finish);
+      a.addEventListener('error', finish);
+      a.src = src;
+      a.play().catch(() => finish());
+    });
+  }
+
   async function doSubmit(auto = false) {
     if (!currentQ) return;
     // Guard against double submission. Auto-submit (silence countdown) and a
@@ -450,6 +478,15 @@ export default function InterviewPage() {
       });
       setTranscript('');
       finalAccumRef.current = '';
+
+      // Play the interviewer's acknowledgment ("嗯，OK，我理解了..") before
+      // moving to the next question. This is the single biggest "feels like
+      // a real person" upgrade — the interviewer responds to what you just
+      // said instead of jumping straight into the next question.
+      if (res.acknowledgment_audio_url) {
+        await playAcknowledgment(fileUrl(res.acknowledgment_audio_url) || '');
+      }
+
       if (res.next_question) {
         setCurrentQ(res.next_question);
       } else if (res.round_finished && res.round) {

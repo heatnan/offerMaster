@@ -68,17 +68,49 @@ def plan_questions(resume: str, jd: str, role: str, round_no: int = 1) -> list[d
 class FollowupDecision(TypedDict):
     action: str  # "followup" | "next"
     followup_question: str
+    acknowledgment: str
     reason: str
 
 
-def decide_followup(topic: str, question: str, answer: str, followups_so_far: int) -> FollowupDecision:
+def decide_followup(
+    topic: str,
+    question: str,
+    answer: str,
+    followups_so_far: int,
+    role: str = "peer",
+    history: list[dict] | None = None,
+) -> FollowupDecision:
+    """Decide follow-up or move on.
+
+    Now takes:
+    - role: to pick a persona-specific voice for acknowledgment
+    - history: list of {question, answer} dicts for THIS round, so the LLM
+      can spot cross-question inconsistencies and avoid repeating topics.
+    """
     if followups_so_far >= settings.MAX_FOLLOWUPS:
-        return {"action": "next", "followup_question": "", "reason": "达到最大追问次数"}
+        return {
+            "action": "next",
+            "followup_question": "",
+            "acknowledgment": "嗯，我了解了。",
+            "reason": "达到最大追问次数",
+        }
+
+    persona = prompts.ROLE_PERSONA.get(role, prompts.ROLE_PERSONA["peer"])
+    history = history or []
+    if not history:
+        history_text = "（本题是本轮第一题，暂无历史）"
+    else:
+        history_text = "\n".join(
+            f"- Q: {h.get('question', '')}\n  A: {h.get('answer', '') or '(未作答)'}"
+            for h in history
+        )
+
     data = llm.chat_json(
         messages=[
             {
                 "role": "system",
                 "content": prompts.FOLLOWUP_DECIDE_SYSTEM.format(
+                    persona=persona,
                     followups_so_far=followups_so_far,
                     max_followups=settings.MAX_FOLLOWUPS,
                     strategy=settings.FOLLOWUP_STRATEGY,
@@ -87,17 +119,26 @@ def decide_followup(topic: str, question: str, answer: str, followups_so_far: in
             {
                 "role": "user",
                 "content": prompts.FOLLOWUP_DECIDE_USER.format(
-                    topic=topic, question=question, answer=answer
+                    history=history_text,
+                    topic=topic,
+                    question=question,
+                    answer=answer,
                 ),
             },
         ],
-        temperature=0.4,
+        temperature=0.5,
     )
     action = data.get("action", "next")
     if action not in ("followup", "next"):
         action = "next"
+    ack = (data.get("acknowledgment") or "").strip()
+    # Fallback: if LLM forgot the acknowledgment, synthesize something bland
+    # so we never emit an empty bridge phrase to the frontend.
+    if not ack:
+        ack = "嗯，我了解了。" if role == "manager" else "嗯，OK。"
     return {
         "action": action,
+        "acknowledgment": ack,
         "followup_question": (data.get("followup_question") or "").strip(),
         "reason": (data.get("reason") or "").strip(),
     }

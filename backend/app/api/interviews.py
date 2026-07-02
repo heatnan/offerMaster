@@ -387,15 +387,53 @@ def submit_answer(interview_id: int, body: schemas.AnswerIn, db: Session = Depen
         models.Question.parent_question_id == root_id,
     ).count()
 
+    # Build round history so the LLM can see every question + answer so far
+    # in this round. This is what enables "cross-question memory": spotting
+    # contradictions, avoiding topic repetition, and letting the acknowledgment
+    # feel like the interviewer is actually listening.
+    round_ = db.get(models.Round, q.round_id)
+    role_for_persona = round_.role if round_ else "peer"
+    history_qas: list[dict] = []
+    prev_qs = (
+        db.query(models.Question)
+        .filter(models.Question.round_id == q.round_id)
+        .filter(models.Question.id != q.id)
+        .order_by(models.Question.seq)
+        .all()
+    )
+    for pq in prev_qs:
+        pa = db.query(models.Answer).filter_by(question_id=pq.id).first()
+        if pa:  # only include answered ones
+            history_qas.append({
+                "question": pq.question_text,
+                "answer": pa.transcript,
+            })
+
     # ask agent for followup decision
     decision = nodes.decide_followup(
         topic=q.topic or q.question_text[:40],
         question=q.question_text,
         answer=body.transcript,
         followups_so_far=followups_so_far,
+        role=role_for_persona,
+        history=history_qas,
     )
 
     result: dict = {"score": None, "decision": decision}
+
+    # Synthesize a short TTS for the acknowledgment so the frontend can play
+    # it INSTANTLY on receiving the response, while the next-question TTS is
+    # (if needed) being generated. This is what makes the interviewer feel
+    # like a real person acknowledging you before moving on.
+    ack_text = (decision.get("acknowledgment") or "").strip()
+    if ack_text:
+        try:
+            ack_rel = voice_service.save_tts(ack_text, subdir="acks")
+            result["acknowledgment_audio_url"] = _tts_url(ack_rel)
+        except Exception as e:
+            print(f"[warn] ack tts failed: {e}")
+            result["acknowledgment_audio_url"] = None
+    result["acknowledgment"] = ack_text
 
     if decision["action"] == "followup" and decision["followup_question"]:
         # Budget: adding a followup increases total questions. To keep interview
@@ -455,7 +493,6 @@ def submit_answer(interview_id: int, body: schemas.AnswerIn, db: Session = Depen
         return result
 
     # round finished
-    round_ = db.get(models.Round, q.round_id)
     _finalize_round(round_, db)
     db.commit()
     result["round_finished"] = True
