@@ -22,8 +22,8 @@ class Settings(BaseSettings):
     # 需要在火山引擎后台开通"语音合成大模型"服务后填以下四个字段。
     DOUBAO_APP_ID: str = ""
     DOUBAO_ACCESS_TOKEN: str = ""
-    DOUBAO_CLUSTER: str = "volc_tts_notrans"  # 大模型音色集群，一般不用改
-    DOUBAO_VOICE_TYPE: str = "zh_male_M392_conversation_wvae_bigtts"  # 默认"沉稳男声"
+    DOUBAO_CLUSTER: str = "volcano_tts"  # 大模型音色集群 (bigtts 系列音色用这个)
+    DOUBAO_VOICE_TYPE: str = "zh_male_m191_uranus_bigtts"  # 默认"云舟" (Seed TTS 2.0 沉稳男声)
 
     # DB
     MYSQL_HOST: str = "mysql"

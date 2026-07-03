@@ -30,7 +30,7 @@
 | 数据库 | MySQL 8 |
 | LLM | OpenAI 兼容协议（默认 DeepSeek，可切 Kimi / Qwen / GPT） |
 | STT | faster-whisper（本地，中文） |
-| TTS | edge-tts（免费，微软音色） |
+| TTS | edge-tts（默认，免费）· 可选豆包 Seed TTS 2.0（更自然、有情感） |
 | 部署 | docker-compose |
 
 ## 快速开始
@@ -90,8 +90,41 @@ offerMaster/
 见 `.env.example`，支持切换：
 - **LLM provider**（DeepSeek / Kimi / Qwen / GPT / 任何 OpenAI 兼容 API）
 - **STT provider**（本地 Whisper / OpenAI API 兼容）
-- **TTS provider**（Edge TTS / OpenAI API 兼容）
+- **TTS provider**（Edge TTS / 豆包 Seed TTS 2.0 / OpenAI API 兼容）
 - 每轮题量、追问激进度、通过阈值等
+
+### 可选：切换到豆包 TTS（更像真人的中文情感语音）
+
+默认用免费的 Edge TTS，零门槛。如果觉得 Edge 声音太"播音腔"、想要更自然有情感的中文面试官声音，可以切到火山引擎豆包语音合成大模型 2.0：
+
+**开通**
+
+1. 打开火山引擎语音技术控制台：https://console.volcengine.com/speech/service/10007
+2. 找到「豆包语音合成模型 2.0」，点击开通（新用户有 2 万字符免费额度，约够 4-6 场完整面试）
+3. 进入应用详情，复制 **APP ID** 和 **Access Token**
+
+**配置 `.env`**
+
+```bash
+TTS_PROVIDER=doubao
+DOUBAO_APP_ID=<你的 APP ID>
+DOUBAO_ACCESS_TOKEN=<你的 Access Token>
+DOUBAO_CLUSTER=volcano_tts
+DOUBAO_VOICE_TYPE=zh_male_m191_uranus_bigtts   # 云舟（沉稳男声，默认推荐）
+```
+
+其他可选音色（2.0 通用场景）：
+- `zh_male_m191_uranus_bigtts` — 云舟（沉稳男声）
+- `zh_female_xiaohe_uranus_bigtts` — 小何（自然女声）
+- `zh_male_taocheng_uranus_bigtts` — 小天（年轻男声）
+
+**成本**：约 ¥15 / 百万字符，一场完整面试 ≈ ¥0.05。
+
+改完后必须重建后端才会生效（restart 不会加载新的环境变量）：
+
+```bash
+docker compose up -d --build backend
+```
 
 ## Roadmap
 
@@ -100,7 +133,8 @@ offerMaster/
 - [x] Answer 音频回放
 - [x] 面评报告 PDF 导出
 - [ ] 流式 ASR（FunASR / 火山引擎），消灭"提交后等待"
-- [ ] 情感 TTS（豆包 / MiniMax），让面试官声音更有真人感
+- [x] 情感 TTS（豆包 Seed TTS 2.0 可选 provider）
+- [ ] 流式 TTS（豆包 V3 WebSocket），降低首字延迟
 - [ ] 表情驱动 Avatar（SadTalker / LivePortrait）
 - [ ] Prompt 版本化管理
 - [ ] 面试历史管理 + 多用户
