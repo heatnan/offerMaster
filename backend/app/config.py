@@ -14,8 +14,16 @@ class Settings(BaseSettings):
     WHISPER_COMPUTE_TYPE: str = "int8"
 
     # TTS
-    TTS_PROVIDER: str = "edge"  # edge | openai_compat
+    TTS_PROVIDER: str = "edge"  # edge | openai_compat | doubao
     TTS_VOICE: str = "zh-CN-YunjianNeural"
+
+    # Doubao (Volcengine) TTS — only used when TTS_PROVIDER=doubao.
+    # 火山引擎语音合成大模型 API：https://www.volcengine.com/docs/6561/1257544
+    # 需要在火山引擎后台开通"语音合成大模型"服务后填以下四个字段。
+    DOUBAO_APP_ID: str = ""
+    DOUBAO_ACCESS_TOKEN: str = ""
+    DOUBAO_CLUSTER: str = "volc_tts_notrans"  # 大模型音色集群，一般不用改
+    DOUBAO_VOICE_TYPE: str = "zh_male_M392_conversation_wvae_bigtts"  # 默认"沉稳男声"
 
     # DB
     MYSQL_HOST: str = "mysql"

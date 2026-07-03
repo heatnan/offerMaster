@@ -117,9 +117,84 @@ class OpenAICompatTTS:
         return resp.read()
 
 
+class DoubaoTTS:
+    """火山引擎（豆包）语音合成大模型 TTS provider.
+
+    Doc: https://www.volcengine.com/docs/6561/1257544
+
+    Optional upgrade for users who want a much more natural, emotionally-
+    expressive Chinese voice than free Edge TTS.  Requires opening a
+    Volcengine account and filling DOUBAO_* in .env.
+
+    Falls back to raising an informative error if credentials are missing,
+    so users don't get a cryptic 401 from the API.
+    """
+
+    API_URL = "https://openspeech.bytedance.com/api/v1/tts"
+
+    def __init__(self):
+        if not (settings.DOUBAO_APP_ID and settings.DOUBAO_ACCESS_TOKEN):
+            raise RuntimeError(
+                "TTS_PROVIDER=doubao 但未配置 DOUBAO_APP_ID / DOUBAO_ACCESS_TOKEN。"
+                "请在 .env 里填入火山引擎语音合成服务的凭证，或改用 TTS_PROVIDER=edge。"
+            )
+
+    def synthesize(self, text: str) -> bytes:
+        import json
+        import base64
+        import urllib.request
+        import urllib.error
+
+        payload = {
+            "app": {
+                "appid": settings.DOUBAO_APP_ID,
+                "token": settings.DOUBAO_ACCESS_TOKEN,
+                "cluster": settings.DOUBAO_CLUSTER,
+            },
+            "user": {"uid": "offer-master"},
+            "audio": {
+                "voice_type": settings.DOUBAO_VOICE_TYPE,
+                "encoding": "mp3",
+                "speed_ratio": 1.0,
+                "volume_ratio": 1.0,
+                "pitch_ratio": 1.0,
+            },
+            "request": {
+                "reqid": uuid.uuid4().hex,
+                "text": text,
+                "text_type": "plain",
+                "operation": "query",
+            },
+        }
+        req = urllib.request.Request(
+            self.API_URL,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                # 豆包用 Bearer;{token} 这种非标准格式
+                "Authorization": f"Bearer;{settings.DOUBAO_ACCESS_TOKEN}",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"Doubao TTS HTTP {e.code}: {body}") from e
+
+        if data.get("code") != 3000:
+            raise RuntimeError(f"Doubao TTS error: {data.get('code')} {data.get('message')}")
+        audio_b64 = data.get("data")
+        if not audio_b64:
+            raise RuntimeError(f"Doubao TTS empty audio: {data}")
+        return base64.b64decode(audio_b64)
+
+
 def get_tts() -> TTSProvider:
     if settings.TTS_PROVIDER == "edge":
         return EdgeTTS()
+    if settings.TTS_PROVIDER == "doubao":
+        return DoubaoTTS()
     return OpenAICompatTTS()
 
 
