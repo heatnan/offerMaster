@@ -29,6 +29,11 @@ services:
       - .env
     environment:
       HF_ENDPOINT: https://hf-mirror.com
+    # 显式指定公共 DNS，避免 Docker 内嵌 DNS 偶发解析失败
+    dns:
+      - 223.5.5.5      # 阿里
+      - 119.29.29.29   # 腾讯
+      - 8.8.8.8        # Google
     volumes:
       - storage_data:/data
       - whisper_cache:/root/.cache/huggingface

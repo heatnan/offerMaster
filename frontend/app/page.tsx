@@ -94,6 +94,7 @@ export default function HomePage() {
           <label className="block font-medium mb-1">岗位名称</label>
           <input className="w-full border rounded px-3 py-2" value={position}
             onChange={e => setPosition(e.target.value)} placeholder="例如：后端工程师 / SRE / 前端 L5" />
+          <p className="text-xs text-gray-400 mt-1">只填职位名称，JD 全文贴到下面那栏</p>
         </div>
 
         <div>

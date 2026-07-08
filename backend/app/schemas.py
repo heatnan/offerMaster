@@ -1,9 +1,17 @@
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class InterviewCreate(BaseModel):
     position_title: str
+
+    @field_validator("position_title")
+    @classmethod
+    def position_title_length(cls, v: str) -> str:
+        v = v.strip()
+        if len(v) > 255:
+            raise ValueError("岗位名称不能超过 255 字符，请只填写职位名称（如：后端工程师）")
+        return v
     jd_text: str
     resume_text: str
     rounds_planned: int = 1

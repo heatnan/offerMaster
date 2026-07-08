@@ -29,7 +29,7 @@
 | 后端 | FastAPI + SQLAlchemy + LangGraph |
 | 数据库 | MySQL 8 |
 | LLM | OpenAI 兼容协议（默认 DeepSeek，可切 Kimi / Qwen / GPT） |
-| STT | faster-whisper（本地，中文） |
+| STT | faster-whisper（默认，本地）· 可选火山引擎豆包流式 ASR 2.0（中文准确率更高） |
 | TTS | edge-tts（默认，免费）· 可选豆包 Seed TTS 2.0（更自然、有情感） |
 | 部署 | docker-compose |
 
@@ -89,9 +89,36 @@ offerMaster/
 
 见 `.env.example`，支持切换：
 - **LLM provider**（DeepSeek / Kimi / Qwen / GPT / 任何 OpenAI 兼容 API）
-- **STT provider**（本地 Whisper / OpenAI API 兼容）
+- **STT provider**（本地 Whisper / 火山引擎豆包流式 ASR / OpenAI API 兼容）
 - **TTS provider**（Edge TTS / 豆包 Seed TTS 2.0 / OpenAI API 兼容）
 - 每轮题量、追问激进度、通过阈值等
+
+### 可选：切换到火山引擎流式 ASR（中文更准 + 实时字幕）
+
+默认用本地 Whisper，零门槛。Whisper 在连续口语和专有名词（技术术语、人名）上准确率有限，且要录完整段才转写。切换到火山引擎豆包流式语音识别 2.0 后，中文识别更准，而且**边说边出字**（前端把 16kHz PCM 通过 WebSocket 实时推给后端转写）。
+
+**开通**
+
+1. 打开控制台：https://console.volcengine.com/speech/service/10007
+2. 找到「豆包流式语音识别模型 2.0」，点击开通（试用 20 小时）
+3. 在「API Key 管理」创建一个 API Key（新版控制台鉴权用 API Key）
+
+**配置 `.env`**
+
+```bash
+STT_PROVIDER=volcengine_asr
+VOLCENGINE_ASR_API_KEY=你的_API_Key
+```
+
+> 注：识别准确率仍受口音、网络、专有名词影响，识别错误可能拉低面试评分——回答中可在下方文本框手动订正后再提交。
+
+**成本**：按识别小时数计费，试用 20 小时，资源包 900 元起。
+
+改完后重建后端：
+
+```bash
+docker compose up -d --build backend
+```
 
 ### 可选：切换到豆包 TTS（更像真人的中文情感语音）
 
@@ -132,8 +159,9 @@ docker compose up -d --build backend
 - [x] 三档面试官人格差异化
 - [x] Answer 音频回放
 - [x] 面评报告 PDF 导出
-- [ ] 流式 ASR（FunASR / 火山引擎），消灭"提交后等待"
+- [x] 流式 ASR（火山引擎豆包 2.0），录音时实时出字幕
 - [x] 情感 TTS（豆包 Seed TTS 2.0 可选 provider）
+- [x] 精准 STT（火山引擎豆包 ASR 2.0 可选 provider）
 - [ ] 流式 TTS（豆包 V3 WebSocket），降低首字延迟
 - [ ] 表情驱动 Avatar（SadTalker / LivePortrait）
 - [ ] Prompt 版本化管理

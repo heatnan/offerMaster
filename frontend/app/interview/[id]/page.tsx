@@ -2,8 +2,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import {
-  startRound, stt, submitAnswer, getDetail, endInterview, getQuestion,
-  fileUrl, Question, Round, backendLog,
+  startRound, stt, sttStream, submitAnswer, getDetail, endInterview, getQuestion,
+  fileUrl, Question, Round, backendLog, SttStreamHandle,
 } from '@/lib/api';
 import InterviewerAvatar from '@/components/InterviewerAvatar';
 
@@ -65,11 +65,15 @@ export default function InterviewPage() {
   const mrRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const useWebSpeechRef = useRef<boolean>(false);
+  // Volcengine ASR stream handle
+  const sttStreamRef = useRef<SttStreamHandle | null>(null);
+  const sttReadyRef = useRef<boolean>(false); // WS open before first chunk arrives
 
   // VAD: audio level monitoring
   const micStreamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
+  const pcmNodeRef = useRef<ScriptProcessorNode | null>(null); // captures raw PCM for volcengine streaming
   const rafRef = useRef<number | null>(null);
   const lastVoiceAtRef = useRef<number>(Date.now());
   const silenceTimerRef = useRef<any>(null);
@@ -228,13 +232,57 @@ export default function InterviewPage() {
       startSilenceWatcher();
 
       // Record whole answer for Whisper (authoritative transcript on submit).
-      // No live speech recognition on screen — cleaner UX than the flickering preview.
+      // If the backend uses volcengine_asr, also open a WS stream so we can
+      // show real-time interim text while recording.
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
         : 'audio/webm';
       const mr = new MediaRecorder(stream, { mimeType });
       chunksRef.current = [];
-      mr.ondataavailable = e => { if (e.data && e.data.size > 0) chunksRef.current.push(e.data); };
+
+      // Try to open volcengine ASR stream for live display + authoritative transcript.
+      // Volcengine streaming ASR needs raw PCM (16kHz/16bit/mono), NOT webm/opus,
+      // so we capture PCM via a ScriptProcessorNode and stream it over the WS.
+      try {
+        const streamHandle = sttStream(
+          (interim) => { setInterimText(interim); },
+          (_err) => { /* silent — will fallback to POST /voice/stt on submit */ },
+        );
+        sttStreamRef.current = streamHandle;
+        sttReadyRef.current = false;
+        setTimeout(() => { sttReadyRef.current = true; }, 200);
+
+        // PCM capture: downsample ctx.sampleRate -> 16000, Float32 -> Int16LE
+        const inRate = ctx.sampleRate; // usually 48000
+        const targetRate = 16000;
+        const node = ctx.createScriptProcessor(4096, 1, 1);
+        node.onaudioprocess = (ev: AudioProcessingEvent) => {
+          if (!sttStreamRef.current || !sttReadyRef.current) return;
+          const input = ev.inputBuffer.getChannelData(0);
+          // linear downsample
+          const ratio = inRate / targetRate;
+          const outLen = Math.floor(input.length / ratio);
+          const pcm = new Int16Array(outLen);
+          for (let i = 0; i < outLen; i++) {
+            const s = input[Math.floor(i * ratio)];
+            const clamped = Math.max(-1, Math.min(1, s));
+            pcm[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
+          }
+          sttStreamRef.current.send(new Blob([pcm.buffer]));
+        };
+        source.connect(node);
+        node.connect(ctx.destination); // required for onaudioprocess to fire in some browsers
+        pcmNodeRef.current = node;
+      } catch {
+        sttStreamRef.current = null;
+      }
+
+      // MediaRecorder still records webm for the POST /voice/stt fallback path.
+      mr.ondataavailable = e => {
+        if (e.data && e.data.size > 0) {
+          chunksRef.current.push(e.data);
+        }
+      };
       mrRef.current = mr;
       mr.start(1000); // flush chunk every 1s so onstop has full data
 
@@ -342,6 +390,18 @@ export default function InterviewPage() {
   function cleanupMic() {
     try { recognitionRef.current?.abort?.(); } catch {}
     try { mrRef.current?.stop?.(); } catch {}
+    // Disconnect PCM capture node
+    if (pcmNodeRef.current) {
+      try { pcmNodeRef.current.disconnect(); } catch {}
+      pcmNodeRef.current.onaudioprocess = null;
+      pcmNodeRef.current = null;
+    }
+    // Close volcengine ASR stream if still open (doSubmit path may have already consumed it)
+    if (sttStreamRef.current) {
+      try { sttStreamRef.current.close(); } catch {}
+      sttStreamRef.current = null;
+    }
+    sttReadyRef.current = false;
     recognitionRef.current = null;
     mrRef.current = null;
     if (silenceTimerRef.current) clearInterval(silenceTimerRef.current);
@@ -425,28 +485,63 @@ export default function InterviewPage() {
 
     let finalText = typedText;
     let answerAudioPath: string | undefined;
-    try {
-      const blob = await stopRecorderAndGetBlob();
-      if (blob && blob.size > 1000) {
-        try {
-          const { text, audio_path } = await stt(blob);
-          const whisperText = (text || '').trim();
-          if (whisperText) finalText = whisperText;
-          if (audio_path) answerAudioPath = audio_path;
-        } catch (e: any) {
-          console.warn('Whisper failed:', e);
-          if (!typedText) {
-            setBusy(false);
-            setError('语音转写失败，请在下方手动输入回答后再次提交。');
-            cleanupMic();
-            return;
-          }
-          setError('语音转写失败，已使用你手动输入的文字。');
+
+    // 优先走流式 WS：如果 volcengine ASR 通道还活着，直接从它拿 final 结果，
+    // 音频文件也由后端 WS 端一并落盘并返回 audio_path，无需再走 POST /voice/stt。
+    const streamHandle = sttStreamRef.current;
+    let usedStream = false;
+    if (streamHandle && streamHandle.isAlive()) {
+      try {
+        // 停止 PCM 采集（不再往 WS 发新音频），并停止 MediaRecorder
+        if (pcmNodeRef.current) {
+          try { pcmNodeRef.current.disconnect(); } catch {}
+          pcmNodeRef.current.onaudioprocess = null;
         }
+        await new Promise<void>((resolve) => {
+          const mr = mrRef.current;
+          if (!mr || mr.state === 'inactive') { resolve(); return; }
+          mr.onstop = () => resolve();
+          try { mr.stop(); } catch { resolve(); }
+        });
+        // 给最后一块 PCM → ws.send 一点时间落地
+        await new Promise(r => setTimeout(r, 100));
+
+        const { text, audio_path } = await streamHandle.finish();
+        const streamText = (text || '').trim();
+        if (streamText) finalText = streamText;
+        if (audio_path) answerAudioPath = audio_path;
+        usedStream = true;
+      } catch (e: any) {
+        console.warn('sttStream failed, fallback to POST:', e);
       }
-    } finally {
-      cleanupMic();
     }
+
+    // Fallback：WS 通道不可用 → POST /voice/stt（Whisper / OpenAI-compat 也走这条）
+    if (!usedStream) {
+      try {
+        const blob = await stopRecorderAndGetBlob();
+        if (blob && blob.size > 1000) {
+          try {
+            const { text, audio_path } = await stt(blob);
+            const whisperText = (text || '').trim();
+            if (whisperText) finalText = whisperText;
+            if (audio_path) answerAudioPath = audio_path;
+          } catch (e: any) {
+            console.warn('POST /voice/stt failed:', e);
+            if (!typedText) {
+              setBusy(false);
+              setError('语音转写失败，请在下方手动输入回答后再次提交。');
+              cleanupMic();
+              return;
+            }
+            setError('语音转写失败，已使用你手动输入的文字。');
+          }
+        }
+      } finally {
+        // cleanupMic in finally block below
+      }
+    }
+    cleanupMic();
 
     if (!finalText) {
       setBusy(false);
@@ -701,8 +796,10 @@ export default function InterviewPage() {
               placeholder="录音提交后，Whisper 转写结果会显示在这里。你也可以在此手动编辑或直接输入。" />
           )}
           {micState === 'listening' && (
-            <div className="text-xs text-gray-500 border rounded p-3 bg-gray-50">
-              录音中… 屏幕不显示实时字幕（浏览器实时识别不准），提交后会用后端 Whisper 转写完整音频。
+            <div className="text-xs text-gray-500 border rounded p-3 bg-gray-50 min-h-[3rem]">
+              {interimText
+                ? <span className="text-gray-700">{interimText}</span>
+                : '录音中… 实时转写显示在这里'}
             </div>
           )}
         </div>
