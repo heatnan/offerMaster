@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import io
 import os
+import time
 import uuid
 from pathlib import Path
 from typing import Protocol
@@ -347,10 +348,24 @@ def get_tts() -> TTSProvider:
 
 
 def save_tts(text: str, subdir: str = "tts") -> str:
-    """Synthesize and persist to storage; return relative path."""
+    """Synthesize and persist to storage; return relative path.
+
+    Retries a couple of times because the network path to cloud TTS providers
+    (e.g. Docker Desktop's DNS resolver) can blip transiently — a short retry
+    self-heals those without failing the whole question.
+    """
     out_dir = Path(settings.STORAGE_DIR) / subdir
     out_dir.mkdir(parents=True, exist_ok=True)
     fname = f"{uuid.uuid4().hex}.mp3"
     fpath = out_dir / fname
-    fpath.write_bytes(get_tts().synthesize(text))
-    return str(fpath.relative_to(settings.STORAGE_DIR))
+    last_err: Exception | None = None
+    for attempt in range(3):
+        try:
+            fpath.write_bytes(get_tts().synthesize(text))
+            return str(fpath.relative_to(settings.STORAGE_DIR))
+        except Exception as e:
+            last_err = e
+            if attempt < 2:
+                time.sleep(0.6 * (attempt + 1))
+    raise last_err  # type: ignore[misc]
+

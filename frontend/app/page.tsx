@@ -18,7 +18,7 @@ export default function HomePage() {
   const [position, setPosition] = useState('');
   const [jd, setJd] = useState('');
   const [resumeText, setResumeText] = useState('');
-  const [rounds, setRounds] = useState(1);
+  const [plan, setPlan] = useState('1'); // '1' | '2' | '3' | 'only3'（只练三面）
   const [loading, setLoading] = useState(false);
   const [stage, setStage] = useState<Stage>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -41,8 +41,11 @@ export default function HomePage() {
     }
     setLoading(true); setError(null); setStage('creating');
     try {
+      const isOnly3 = plan === 'only3';
       const { id } = await createInterview({
-        position_title: position, jd_text: jd, resume_text: resumeText, rounds_planned: rounds,
+        position_title: position, jd_text: jd, resume_text: resumeText,
+        rounds_planned: isOnly3 ? 3 : parseInt(plan),
+        start_round: isOnly3 ? 3 : 1,
       });
       setStage('planning');
       // Kick off the first round. Backend returns after first-question TTS is ready.
@@ -114,11 +117,12 @@ export default function HomePage() {
 
         <div>
           <label className="block font-medium mb-1">面试轮次</label>
-          <select className="border rounded px-3 py-2" value={rounds}
-            onChange={e => setRounds(parseInt(e.target.value))}>
-            <option value={1}>1 轮（Peer 一面）</option>
-            <option value={2}>2 轮（Peer + High Peer）</option>
-            <option value={3}>3 轮（Peer + High Peer + Manager）</option>
+          <select className="border rounded px-3 py-2" value={plan}
+            onChange={e => setPlan(e.target.value)}>
+            <option value="1">1 轮（Peer 一面）</option>
+            <option value="2">2 轮（Peer + High Peer）</option>
+            <option value="3">3 轮（Peer + High Peer + Manager）</option>
+            <option value="only3">只练三面（Manager · 直接进三面）</option>
           </select>
           <p className="text-sm text-gray-500 mt-1">每轮 5-8 道主题问题 + 动态追问，单轮约 30-60 分钟</p>
         </div>

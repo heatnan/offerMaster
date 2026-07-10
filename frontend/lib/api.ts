@@ -23,6 +23,7 @@ export interface Question {
   question_text: string;
   is_followup: boolean;
   tts_url?: string | null;
+  tts_failed?: boolean;
 }
 
 export interface Round {
@@ -48,6 +49,7 @@ export async function createInterview(body: {
   jd_text: string;
   resume_text: string;
   rounds_planned: number;
+  start_round?: number;
 }) {
   return jsonFetch<{ id: number; status: string }>('/interviews', {
     method: 'POST',

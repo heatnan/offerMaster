@@ -15,6 +15,9 @@ class InterviewCreate(BaseModel):
     jd_text: str
     resume_text: str
     rounds_planned: int = 1
+    # Which round to begin at (1=peer, 2=high_peer, 3=manager). Lets the user
+    # jump straight into e.g. the manager round to practice it in isolation.
+    start_round: int = 1
 
 
 class InterviewOut(BaseModel):

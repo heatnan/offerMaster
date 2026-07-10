@@ -20,6 +20,7 @@ def plan_questions(resume: str, jd: str, role: str, round_no: int = 1) -> list[d
     n_max = settings.QUESTIONS_PER_ROUND_MAX
     n = (n_min + n_max) // 2
     role_desc = prompts.ROLE_DESC.get(role, prompts.ROLE_DESC["peer"])
+    role_style = prompts.ROLE_QUESTION_STYLE.get(role, prompts.ROLE_QUESTION_STYLE["peer"])
     data = llm.chat_json(
         messages=[
             {"role": "system", "content": prompts.PLAN_QUESTIONS_SYSTEM},
@@ -27,6 +28,7 @@ def plan_questions(resume: str, jd: str, role: str, round_no: int = 1) -> list[d
                 "role": "user",
                 "content": prompts.PLAN_QUESTIONS_USER.format(
                     role_desc=role_desc,
+                    role_style=role_style,
                     n=n, n_min=n_min, n_max=n_max,
                     resume=resume[:6000],
                     jd=jd[:3000],
@@ -146,23 +148,20 @@ def decide_followup(
 
 # ---------- Node: score a question ----------
 
-def score_answer(question: str, answer: str) -> dict:
+def score_answer(question: str, answer: str, role: str = "peer") -> dict:
+    dim_keys = list(prompts.SCORE_DIMENSIONS.get(role, prompts.SCORE_DIMENSIONS["peer"]).keys())
     data = llm.chat_json(
         messages=[
-            {"role": "system", "content": prompts.SCORE_SYSTEM},
+            {"role": "system", "content": prompts.build_score_system(role)},
             {"role": "user", "content": prompts.SCORE_USER.format(question=question, answer=answer)},
         ],
         temperature=0.2,
     )
-    dims = data.get("dimensions") or {}
-    dims = {
-        "technical": _clip(dims.get("technical", 0)),
-        "expression": _clip(dims.get("expression", 0)),
-        "depth": _clip(dims.get("depth", 0)),
-    }
+    raw = data.get("dimensions") or {}
+    dims = {k: _clip(raw.get(k, 0)) for k in dim_keys}
     total = data.get("total")
     if not isinstance(total, (int, float)):
-        total = round(sum(dims.values()) / 3 * 10, 1)
+        total = round(sum(dims.values()) / len(dims) * 10, 1)
     return {
         "dimensions": dims,
         "total": float(total),

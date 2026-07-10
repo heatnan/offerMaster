@@ -48,6 +48,7 @@ export default function InterviewPage() {
   const [roundEnd, setRoundEnd] = useState<{ passed: boolean; feedback: string; interview_status: string } | null>(null);
   const [audioReady, setAudioReady] = useState(false);
   const [needGesture, setNeedGesture] = useState(false); // autoplay blocked, waiting for user click
+  const [ttsFailed, setTtsFailed] = useState(false); // background TTS synth failed -> fall back to text-only
   const [waitingForClick, setWaitingForClick] = useState(true); // show "start" gate to unlock autoplay
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -140,17 +141,20 @@ export default function InterviewPage() {
 
   // Poll TTS URL if not yet ready
   useEffect(() => {
+    setTtsFailed(false);
     if (!currentQ || currentQ.tts_url) return;
     let stopped = false;
     let attempts = 0;
     const tick = async () => {
-      if (stopped || attempts++ > 30) return;
+      if (stopped) return;
+      if (attempts++ > 20) { setTtsFailed(true); return; }
       try {
         const q = await getQuestion(interviewId, currentQ.id);
         if (q.tts_url) {
           setCurrentQ(cur => (cur && cur.id === q.id ? { ...cur, tts_url: q.tts_url } : cur));
           return;
         }
+        if (q.tts_failed) { setTtsFailed(true); return; }
       } catch {}
       setTimeout(tick, 1500);
     };
@@ -186,6 +190,23 @@ export default function InterviewPage() {
     return () => { a.onended = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentQ?.tts_url, currentQ?.id, waitingForClick]);
+
+  // TTS failed for this question: don't hang forever on "语音合成中…". Show the
+  // question text (already rendered) and start the mic directly so the candidate
+  // can read and answer without waiting for audio that will never arrive.
+  useEffect(() => {
+    if (!ttsFailed || !currentQ || currentQ.tts_url) return;
+    if (waitingForClick) return;
+    setTranscript('');
+    setInterimText('');
+    finalAccumRef.current = '';
+    setNeedGesture(false);
+    cleanupMic();
+    if (currentQIdRef.current === currentQ.id && !roundEnd) {
+      startListening();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ttsFailed, currentQ?.tts_url, currentQ?.id, waitingForClick]);
 
   // Whenever the interviewer audio starts playing (initial autoplay, replay,
   // whatever) we must pause the mic — otherwise the speaker's audio bleeds
@@ -748,7 +769,7 @@ export default function InterviewPage() {
             <div className="flex items-center gap-3">
               <MicIndicator state={micState} volumePct={volumePct} />
               <div className="text-sm">
-                {micState === 'idle' && (currentQ.tts_url ? '面试官讲完后自动开始录音…' : '语音合成中…')}
+                {micState === 'idle' && (currentQ.tts_url ? '面试官讲完后自动开始录音…' : (ttsFailed ? '语音生成失败，请直接阅读上方问题作答…' : '语音合成中…'))}
                 {micState === 'listening' && '正在录音，说完停约 12 秒会自动提交；建议答完手动点"立即提交"。'}
                 {micState === 'countdown' && (
                   <span className="text-orange-600 font-medium">

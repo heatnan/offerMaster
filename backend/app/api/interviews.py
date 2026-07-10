@@ -26,8 +26,13 @@ ROLE_BY_ROUND = {1: "peer", 2: "high_peer", 3: "manager"}
 _pending_scores: dict[int, list[threading.Thread]] = {}
 _pending_scores_lock = threading.Lock()
 
+# Question ids whose background TTS synth failed (e.g. transient DNS / provider
+# outage). Lets the get_question poll endpoint tell the frontend to STOP waiting
+# and fall back to text-only, instead of spinning "语音合成中…" forever.
+_tts_failed_ids: set[int] = set()
 
-def _score_and_save_async(question_id: int, question_text: str, answer_text: str):
+
+def _score_and_save_async(question_id: int, question_text: str, answer_text: str, role: str = "peer"):
     """Run score_answer in the background and persist the Score row.
 
     Uses UPSERT semantics: if a Score row already exists for this question
@@ -37,7 +42,7 @@ def _score_and_save_async(question_id: int, question_text: str, answer_text: str
     """
     db = SessionLocal()
     try:
-        s = nodes.score_answer(question_text, answer_text)
+        s = nodes.score_answer(question_text, answer_text, role)
         existing = db.query(models.Score).filter_by(question_id=question_id).first()
         if existing:
             existing.dimensions = s["dimensions"]
@@ -111,11 +116,19 @@ def _tts_url(rel_path: str) -> str:
 def create_interview(payload: schemas.InterviewCreate, db: Session = Depends(get_db)):
     if not 1 <= payload.rounds_planned <= 3:
         raise HTTPException(400, "rounds_planned must be 1..3")
+    start_round = payload.start_round or 1
+    if not 1 <= start_round <= payload.rounds_planned:
+        raise HTTPException(400, "start_round must be between 1 and rounds_planned")
     interview = models.Interview(
         position_title=payload.position_title,
         jd_text=payload.jd_text,
         resume_text=payload.resume_text,
         rounds_planned=payload.rounds_planned,
+        # Pre-seed current_round_no so the first started round == start_round.
+        # start_next_round computes next_no = current_round_no + 1, so this lets
+        # the candidate jump straight into e.g. the manager round (start_round=3).
+        # Avoids a schema migration (no Alembic yet) by reusing an existing column.
+        current_round_no=start_round - 1,
     )
     db.add(interview)
     db.commit()
@@ -276,6 +289,7 @@ def _plan_and_tts_async(interview_id: int, round_id: int, role: str, round_no: i
 
 
 def _tts_question_async(question_id: int):
+    _tts_failed_ids.discard(question_id)
     db = SessionLocal()
     try:
         q = db.get(models.Question, question_id)
@@ -284,6 +298,7 @@ def _tts_question_async(question_id: int):
             db.commit()
     except Exception as e:
         print(f"[async tts] error: {e}")
+        _tts_failed_ids.add(question_id)
     finally:
         db.close()
 
@@ -304,9 +319,18 @@ def _tts_all_async(round_id: int):
 
 
 def _ensure_tts(q: models.Question, db: Session):
-    if q and not q.tts_path:
+    """Best-effort synchronous TTS. If synth fails (e.g. transient DNS blip) we
+    must NOT let the round-start request 500 — mark the question as tts_failed so
+    the frontend falls back to text-only, and let the round start normally."""
+    if not q or q.tts_path:
+        return
+    try:
         q.tts_path = voice_service.save_tts(q.question_text)
         db.commit()
+        _tts_failed_ids.discard(q.id)
+    except Exception as e:
+        print(f"[warn] sync tts failed for q{q.id}: {e}")
+        _tts_failed_ids.add(q.id)
 
 
 def _question_to_out(q: models.Question) -> schemas.QuestionOut:
@@ -372,9 +396,11 @@ def submit_answer(interview_id: int, body: schemas.AnswerIn, db: Session = Depen
     question_id_for_score = q.id
     question_text_for_score = q.question_text
     answer_text_for_score = body.transcript
+    round_ = db.get(models.Round, q.round_id)
+    role_for_persona = round_.role if round_ else "peer"
     score_thread = threading.Thread(
         target=_score_and_save_async,
-        args=(question_id_for_score, question_text_for_score, answer_text_for_score),
+        args=(question_id_for_score, question_text_for_score, answer_text_for_score, role_for_persona),
         daemon=True,
     )
     score_thread.start()
@@ -391,8 +417,7 @@ def submit_answer(interview_id: int, body: schemas.AnswerIn, db: Session = Depen
     # in this round. This is what enables "cross-question memory": spotting
     # contradictions, avoiding topic repetition, and letting the acknowledgment
     # feel like the interviewer is actually listening.
-    round_ = db.get(models.Round, q.round_id)
-    role_for_persona = round_.role if round_ else "peer"
+    # (round_ / role_for_persona already resolved above for scoring.)
     history_qas: list[dict] = []
     prev_qs = (
         db.query(models.Question)
@@ -628,7 +653,11 @@ def get_question(interview_id: int, question_id: int, db: Session = Depends(get_
     q = db.get(models.Question, question_id)
     if not q:
         raise HTTPException(404)
-    return _question_to_out(q).model_dump()
+    out = _question_to_out(q).model_dump()
+    # Tell the frontend to stop polling and fall back to text-only if the
+    # background TTS synth for this question failed.
+    out["tts_failed"] = (not q.tts_path) and (question_id in _tts_failed_ids)
+    return out
 
 
 @router.get("/{interview_id}/detail")
