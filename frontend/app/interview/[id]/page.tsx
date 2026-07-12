@@ -757,7 +757,12 @@ export default function InterviewPage() {
                 <div className="text-gray-500">你的回答：</div>
                 <div>{t.answer}</div>
                 {typeof t.score === 'number' && (
-                  <div className="mt-1 text-blue-600">得分 {t.score} · {t.comment}</div>
+                  <div className="mt-2 text-blue-700 text-sm border-t border-blue-100 pt-2">
+                    <span className="font-semibold">得分 {t.score}</span>
+                    {t.comment && (
+                      <div className="mt-1 text-gray-700 whitespace-pre-wrap leading-relaxed">{t.comment}</div>
+                    )}
+                  </div>
                 )}
               </div>
             )}

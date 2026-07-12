@@ -113,7 +113,14 @@ export default function ReportPage() {
                         className="h-8 mt-1"
                       />
                     )}
-                    {q.score != null && <div className="text-blue-600">得分 {q.score} · {q.score_comment}</div>}
+                    {q.score != null && (
+                      <div className="mt-1">
+                        <span className="text-blue-600 font-semibold">得分 {q.score}</span>
+                        {q.score_comment && (
+                          <div className="mt-1 text-gray-700 text-sm whitespace-pre-wrap leading-relaxed">{q.score_comment}</div>
+                        )}
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>
