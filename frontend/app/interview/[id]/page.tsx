@@ -112,12 +112,14 @@ export default function InterviewPage() {
               question_text: unanswered.question_text, is_followup: unanswered.is_followup,
               tts_url: unanswered.tts_url,
             });
-            setTurns(runningRound.questions.map((qq: any) => ({
-              question: {
-                id: qq.id, seq: qq.seq, topic: qq.topic, question_text: qq.question_text,
-                is_followup: qq.is_followup, tts_url: qq.tts_url,
-              },
-              answer: qq.answer || undefined,
+            setTurns(runningRound.questions
+              .filter((qq: any) => qq.answer)
+              .map((qq: any) => ({
+                question: {
+                  id: qq.id, seq: qq.seq, topic: qq.topic, question_text: qq.question_text,
+                  is_followup: qq.is_followup, tts_url: qq.tts_url,
+                },
+                answer: qq.answer || undefined,
               score: qq.score || undefined,
               comment: qq.score_comment || undefined,
             })));
