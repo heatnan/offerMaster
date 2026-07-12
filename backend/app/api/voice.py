@@ -174,7 +174,11 @@ async def stt_stream(ws: WebSocket):
         return str(fpath.relative_to(settings.STORAGE_DIR))
 
     try:
-        async with ext_ws.connect(WS_URL, extra_headers=volcengine_headers) as asr_ws:
+        # ping_interval=None: disable websockets library's own keepalive pings.
+        # The volcengine server manages its own keepalive; if both sides send pings
+        # the ping-pong can race and trigger "keepalive ping timeout" on long answers.
+        async with ext_ws.connect(WS_URL, extra_headers=volcengine_headers,
+                                  ping_interval=None, ping_timeout=None) as asr_ws:
             # 首先发送 full client request 完成握手
             await asr_ws.send(_pack(FULL_CLIENT_HEADER, req_payload))
 
